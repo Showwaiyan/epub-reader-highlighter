@@ -5278,6 +5278,7 @@ class EpubView extends FileView {
 			const seen = new WeakSet<Document>();
 			const lens = new Map<number, number>();
 			let count = -1;
+			let stable = 0;
 			this.probeTimer = window.setInterval(() => {
 				const frames = Array.from(this.contentEl.querySelectorAll("iframe"));
 				if (frames.length !== count) {
@@ -5290,7 +5291,18 @@ class EpubView extends FileView {
 					if (!d) return;
 					if (!seen.has(d)) { seen.add(d); this.attachProbe(d); this.probe(`attached to iframe${i}`); }
 					const n = d.getSelection()?.toString().length ?? 0;
-					if (n !== (lens.get(i) ?? 0)) { lens.set(i, n); this.probe(`iframe${i} selection len=${n}`); }
+					if (n !== (lens.get(i) ?? 0)) { lens.set(i, n); stable = 0; this.probe(`iframe${i} selection len=${n}`); }
+					else if (n > 0 && ++stable === 2 && !this.colorToolbar) {
+						// selection unchanged for ~0.8s: raise the real popup (below the text)
+						const sel = d.getSelection();
+						const contents = ((this.rendition as unknown as { getContents?: () => Contents[] })?.getContents?.() ?? []).find((c) => c.document === d);
+						try {
+							const cfi = (contents as unknown as { cfiFromRange: (r: Range) => string }).cfiFromRange(sel!.getRangeAt(0));
+							this.showColorToolbar(cfi, contents as Contents);
+							const r = (this.colorToolbar as HTMLElement | null)?.getBoundingClientRect();
+							this.probe(`POPUP shown top=${Math.round(r?.top ?? -1)} h=${window.innerHeight}`);
+						} catch (e) { this.probe(`popup failed: ${String(e).slice(0, 60)}`); }
+					}
 				});
 				const hostSel = document.getSelection()?.toString().length ?? 0;
 				if (hostSel) this.probe(`HOST doc selection len=${hostSel}`);
@@ -5332,7 +5344,7 @@ class EpubView extends FileView {
 		});
 		// Clicks on the popup must not reach the outside-click dismiss handler.
 		toolbar.addEventListener("click", (e) => e.stopPropagation());
-		const top = (iframeRect?.top ?? 0) + rect.top - containerRect.top - 34;
+		const top = (iframeRect?.top ?? 0) + (this.probeOn ? rect.bottom + 28 : rect.top - 34) - containerRect.top;
 		const left = (iframeRect?.left ?? 0) + rect.left - containerRect.left;
 		toolbar.setCssStyles({ top: `${Math.max(top, 0)}px`, left: `${left}px` });
 		this.colorToolbar = toolbar;

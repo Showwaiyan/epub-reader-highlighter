@@ -5257,6 +5257,7 @@ class EpubView extends FileView {
 	// an on-screen log of touch/selection/popup events to see what really fires on iPhone.
 	probeOn = false;
 	probeEl: HTMLElement | null = null;
+	probeTimer: number | null = null;
 	probeLines: string[] = [];
 	probe(msg: string) {
 		if (!this.probeOn) return;
@@ -5272,9 +5273,30 @@ class EpubView extends FileView {
 				attr: { style: "position:absolute; left:0; right:0; top:0; z-index:2000; margin:0; padding:6px; max-height:45%; overflow:hidden; font-size:10px; line-height:1.2; background:rgba(0,0,0,.8); color:#7CFC00; pointer-events:none; white-space:pre-wrap;" },
 			});
 			this.probe(`PROBE ON ua=${navigator.userAgent.slice(-40)} vv=${window.visualViewport?.width}x${window.visualViewport?.height}`);
-			// attach to already-rendered iframes
-			for (const c of ((this.rendition as unknown as { getContents?: () => Contents[] })?.getContents?.() ?? [])) this.attachProbe(c.document);
+			// Poll every iframe in the view: attach listeners once per document and
+			// report which frame holds a selection (independent of any event).
+			const seen = new WeakSet<Document>();
+			const lens = new Map<number, number>();
+			let count = -1;
+			this.probeTimer = window.setInterval(() => {
+				const frames = Array.from(this.contentEl.querySelectorAll("iframe"));
+				if (frames.length !== count) {
+					count = frames.length;
+					this.probe(`iframes=${count}`);
+				}
+				frames.forEach((f, i) => {
+					let d: Document | null = null;
+					try { d = f.contentDocument; } catch { this.probe(`iframe${i} cross-origin`); }
+					if (!d) return;
+					if (!seen.has(d)) { seen.add(d); this.attachProbe(d); this.probe(`attached to iframe${i}`); }
+					const n = d.getSelection()?.toString().length ?? 0;
+					if (n !== (lens.get(i) ?? 0)) { lens.set(i, n); this.probe(`iframe${i} selection len=${n}`); }
+				});
+				const hostSel = document.getSelection()?.toString().length ?? 0;
+				if (hostSel) this.probe(`HOST doc selection len=${hostSel}`);
+			}, 400);
 		} else {
+			if (this.probeTimer) window.clearInterval(this.probeTimer);
 			this.probeEl?.remove();
 			this.probeEl = null;
 		}

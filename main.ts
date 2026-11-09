@@ -4845,6 +4845,7 @@ class EpubView extends FileView {
 		this.updatePageNav();
 
 		this.rendition.on("rendered", (section: { index: number }, view: EpubViewLike) => {
+			this.probe(`rendered section=${section.index}`);
 			this.applyStoredHighlightsToSection(section.index);
 			const doc = view?.contents?.document;
 			if (doc) {
@@ -4858,6 +4859,7 @@ class EpubView extends FileView {
 		});
 
 		this.rendition.on("relocated", () => {
+			this.probe("relocated");
 			this.refreshPageIndicator();
 			// A popup left over from another chapter is misplaced; one raised in the
 			// chapter still on screen stays until the reader clicks away.
@@ -5260,14 +5262,14 @@ class EpubView extends FileView {
 		if (!this.probeOn) return;
 		const t = new Date();
 		this.probeLines.push(`${t.getMinutes()}:${String(t.getSeconds()).padStart(2, "0")}.${String(t.getMilliseconds()).padStart(3, "0")} ${msg}`);
-		this.probeLines = this.probeLines.slice(-14);
+		this.probeLines = this.probeLines.slice(-16);
 		if (this.probeEl) this.probeEl.setText(this.probeLines.join("\n"));
 	}
 	toggleProbe() {
 		this.probeOn = !this.probeOn;
 		if (this.probeOn) {
 			this.probeEl = this.contentEl.createEl("pre", {
-				attr: { style: "position:absolute; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:6px; max-height:35%; overflow:hidden; font-size:10px; line-height:1.2; background:rgba(0,0,0,.8); color:#7CFC00; pointer-events:none; white-space:pre-wrap;" },
+				attr: { style: "position:absolute; left:0; right:0; top:0; z-index:2000; margin:0; padding:6px; max-height:45%; overflow:hidden; font-size:10px; line-height:1.2; background:rgba(0,0,0,.8); color:#7CFC00; pointer-events:none; white-space:pre-wrap;" },
 			});
 			this.probe(`PROBE ON ua=${navigator.userAgent.slice(-40)} vv=${window.visualViewport?.width}x${window.visualViewport?.height}`);
 			// attach to already-rendered iframes
@@ -5290,6 +5292,7 @@ class EpubView extends FileView {
 	}
 
 	showColorToolbar(cfiRange: string, contents: Contents) {
+		this.probe("showColorToolbar called");
 		this.dismissColorToolbar();
 		const selection = contents.window.getSelection();
 		const text = selection?.toString() ?? "";
@@ -5511,6 +5514,7 @@ class EpubView extends FileView {
 	}
 
 	dismissColorToolbar() {
+		if (this.colorToolbar) this.probe("popup dismissed");
 		this.colorToolbar?.remove();
 		this.colorToolbar = null;
 	}

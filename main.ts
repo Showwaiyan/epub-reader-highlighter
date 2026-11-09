@@ -4146,6 +4146,7 @@ class EpubView extends FileView {
 			this.registerDomEvent(this.contentEl.ownerDocument, "click", this.outsideClickHandler);
 		}
 
+		this.protoSetup();
 		if (!reusingBook) {
 			const arrayBuffer = await this.app.vault.readBinary(file);
 			await this.plugin.checkBookFingerprint(file.path, arrayBuffer);
@@ -4822,6 +4823,7 @@ class EpubView extends FileView {
 	}
 
 	async renderBook() {
+		this.protoBuild();
 		// A same-session re-render keeps the live position; a fresh open restores
 		// the last saved reading position.
 		const cfi = this.rendition?.location?.start?.cfi ?? this.plugin.getBookRecord(this.filePath).lastCfi;
@@ -4853,6 +4855,7 @@ class EpubView extends FileView {
 				// Clicks inside the book live in a separate iframe document and
 				// never bubble to our document's click listener.
 				doc.addEventListener("click", this.outsideClickHandler);
+				this.protoAttachDoc(doc);
 				this.fixCoverSvgs(doc);
 				if (this.probeOn) this.attachProbe(doc);
 			}
@@ -5259,6 +5262,189 @@ class EpubView extends FileView {
 	probeEl: HTMLElement | null = null;
 	probeTimer: number | null = null;
 	probeLines: string[] = [];
+
+	// ===================================================================
+	// PROTOTYPE (throwaway, not for merge): full-screen mobile reader.
+	// Question: tap zones, toolbar contents/placement, how the toolbar hides,
+	// and how to get Obsidian's header out of the way. Three structurally
+	// different variants, switched live from the floating bar:
+	//   A  top strip      – toolbar drops from the top
+	//   B  bottom bar     – toolbar rises from the bottom, progress always visible
+	//   C  floating button – corner button opens a vertical tool stack
+	// Page turns come from transparent overlay columns in the HOST document
+	// (iframe touch events never reached the plugin on iOS).
+	// ===================================================================
+	protoVariant = "A";
+	protoChrome = true;
+	protoInset = true;
+	protoZonesVisible = false;
+	protoOpen = false;
+	protoEls: HTMLElement[] = [];
+	protoProgressEl: HTMLElement | null = null;
+	protoBarEl: HTMLElement | null = null;
+	protoDbgEl: HTMLElement | null = null;
+	protoHideTimer: number | null = null;
+	protoSetupDone = false;
+
+	private protoLS(k: string, d: string): string {
+		try { return window.localStorage.getItem("epubProto." + k) ?? d; } catch { return d; }
+	}
+	private protoSave(k: string, v: string) {
+		try { window.localStorage.setItem("epubProto." + k, v); } catch { /* ignore */ }
+	}
+	protoDbg(msg: string) {
+		this.protoDbgEl?.setText(msg);
+	}
+
+	protoSetup() {
+		if (this.protoSetupDone) return;
+		this.protoSetupDone = true;
+		this.protoVariant = this.protoLS("variant", "A");
+		this.protoChrome = this.protoLS("chrome", "1") === "1";
+		this.protoInset = this.protoLS("inset", "1") === "1";
+		this.register(() => {
+			this.containerEl.removeClass("epub-fs");
+			document.body.removeClass("epub-fs-active");
+		});
+		// Selection polling (from the iOS selection prototype): raise the colour
+		// popup once a selection has been unchanged for ~0.8s.
+		const lens = new Map<Document, number>();
+		const stable = new Map<Document, number>();
+		this.registerInterval(window.setInterval(() => {
+			for (const f of Array.from(this.contentEl.querySelectorAll("iframe"))) {
+				let d: Document | null = null;
+				try { d = f.contentDocument; } catch { /* ignore */ }
+				if (!d) continue;
+				const n = d.getSelection()?.toString().length ?? 0;
+				if (n !== (lens.get(d) ?? 0)) { lens.set(d, n); stable.set(d, 0); continue; }
+				if (n > 0) {
+					const k = (stable.get(d) ?? 0) + 1;
+					stable.set(d, k);
+					if (k === 2 && !this.colorToolbar) {
+						const sel = d.getSelection();
+						const contents = ((this.rendition as unknown as { getContents?: () => Contents[] })?.getContents?.() ?? []).find((c) => c.document === d);
+						try {
+							const cfi = (contents as unknown as { cfiFromRange: (r: Range) => string }).cfiFromRange(sel!.getRangeAt(0));
+							this.showColorToolbar(cfi, contents as Contents);
+						} catch { /* ignore */ }
+					}
+				}
+			}
+			this.protoUpdateProgress();
+		}, 400));
+	}
+
+	protoUpdateProgress() {
+		const txt = `${this.pageInput?.value ?? ""}${this.pageTotal?.textContent ? " " + this.pageTotal.textContent : ""}`.trim();
+		if (this.protoProgressEl) this.protoProgressEl.setText(this.protoVariant === "C" ? (txt.match(/(\d+)%/)?.[0] ?? txt) : txt);
+		const m = txt.match(/(\d+)%/);
+		if (this.protoBarEl && m) this.protoBarEl.setCssStyles({ width: `${m[1]}%` });
+	}
+
+	protoShow(open: boolean) {
+		this.protoOpen = open;
+		this.contentEl.toggleClass("epub-tb-open", open);
+		if (this.protoHideTimer) window.clearTimeout(this.protoHideTimer);
+		this.protoHideTimer = null;
+		if (!open) this.closeMenus();
+		// A and B hide themselves after a few idle seconds; C waits for a tap.
+		if (open && this.protoVariant !== "C") {
+			const arm = () => {
+				this.protoHideTimer = window.setTimeout(() => {
+					if (this.openMenuEl) arm();
+					else this.protoShow(false);
+				}, 5000);
+			};
+			arm();
+		}
+	}
+
+	protoTurn(dir: "prev" | "next") {
+		if (this.protoOpen) { this.protoShow(false); return; }
+		void (dir === "next" ? this.rendition?.next() : this.rendition?.prev());
+	}
+
+	protoAttachDoc(doc: Document) {
+		// Test: do taps inside the book iframe reach us at all? If yes, a centre tap
+		// can reveal the toolbar (A). The result shows in the switcher's debug text.
+		let sx = 0, sy = 0, st = 0;
+		const win = doc.defaultView;
+		doc.addEventListener("touchstart", (e) => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; st = Date.now(); this.protoDbg("iframe touchstart ok"); }, { capture: true, passive: true });
+		doc.addEventListener("touchend", (e) => {
+			const t = e.changedTouches[0];
+			const tap = Math.abs(t.clientX - sx) < 10 && Math.abs(t.clientY - sy) < 10 && Date.now() - st < 350;
+			const hasSel = (doc.getSelection()?.toString().length ?? 0) > 0;
+			this.protoDbg(`iframe touchend tap=${tap} sel=${hasSel}`);
+			if (tap && !hasSel && this.protoVariant === "A" && win && t.clientX > win.innerWidth * 0.25 && t.clientX < win.innerWidth * 0.75) this.protoShow(!this.protoOpen);
+		}, { capture: true, passive: true });
+	}
+
+	protoBuild() {
+		for (const e of this.protoEls) e.remove();
+		this.protoEls = [];
+		this.protoProgressEl = null;
+		this.protoBarEl = null;
+		const root = this.contentEl;
+		const v = this.protoVariant;
+		this.containerEl.toggleClass("epub-fs", this.protoChrome);
+		document.body.toggleClass("epub-fs-active", this.protoChrome);
+		root.addClass("epub-p");
+		for (const x of ["A", "B", "C"]) root.toggleClass(`epub-p-${x}`, x === v);
+		root.toggleClass("epub-inset", this.protoInset);
+		root.toggleClass("epub-zones-vis", this.protoZonesVisible);
+		this.protoShow(false);
+		const add = (cls: string, parent: HTMLElement = root) => { const el = parent.createDiv({ cls }); this.protoEls.push(el); return el; };
+
+		// Page-turn columns (paged mode only: in scroll mode they would eat scrolling).
+		if (this.paginated) {
+			for (const side of ["l", "r"] as const) {
+				const z = add(`epub-zone epub-zone-${side}`);
+				let sx = 0, sy = 0, down = false;
+				z.addEventListener("pointerdown", (e) => { sx = e.clientX; sy = e.clientY; down = true; });
+				z.addEventListener("pointerup", (e) => {
+					if (!down) return;
+					down = false;
+					const dx = e.clientX - sx, dy = e.clientY - sy;
+					if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) this.protoTurn(dx < 0 ? "next" : "prev");
+					else if (Math.abs(dx) < 12 && Math.abs(dy) < 12) this.protoTurn(side === "l" ? "prev" : "next");
+				});
+				z.addEventListener("pointercancel", () => { down = false; });
+			}
+		}
+		// Reveal affordance per variant.
+		if (v === "A") {
+			add("epub-strip epub-strip-top").addEventListener("click", () => this.protoShow(!this.protoOpen));
+		} else if (v === "B") {
+			const strip = add("epub-strip epub-strip-bottom");
+			strip.addEventListener("click", () => this.protoShow(!this.protoOpen));
+			this.protoBarEl = strip.createDiv({ cls: "epub-bar" });
+			this.protoProgressEl = strip.createDiv({ cls: "epub-prog" });
+		} else {
+			const fab = add("epub-fab");
+			this.protoProgressEl = fab.createSpan();
+			fab.addEventListener("click", () => this.protoShow(!this.protoOpen));
+		}
+		this.protoUpdateProgress();
+
+		// Floating prototype switcher (never ships).
+		const sw = add(`epub-sw epub-sw-${v === "B" || v === "C" ? "top" : "bottom"}`);
+		sw.addEventListener("click", (e) => e.stopPropagation());
+		const names: Record<string, string> = { A: "A top strip", B: "B bottom bar", C: "C float btn" };
+		const chip = (label: string, on: () => void, active = false) => {
+			const b = sw.createEl("button", { text: label, cls: active ? "is-on" : "" });
+			b.addEventListener("click", on);
+			return b;
+		};
+		const set = (variant: string) => { this.protoVariant = variant; this.protoSave("variant", variant); this.protoBuild(); };
+		chip("‹", () => set(v === "A" ? "C" : v === "B" ? "A" : "B"));
+		sw.createSpan({ text: names[v] });
+		chip("›", () => set(v === "A" ? "B" : v === "B" ? "C" : "A"));
+		chip("hdr", () => { this.protoChrome = !this.protoChrome; this.protoSave("chrome", this.protoChrome ? "1" : "0"); this.protoBuild(); }, this.protoChrome);
+		chip("inset", () => { this.protoInset = !this.protoInset; this.protoSave("inset", this.protoInset ? "1" : "0"); this.protoBuild(); }, this.protoInset);
+		chip("zones", () => { this.protoZonesVisible = !this.protoZonesVisible; this.protoBuild(); }, this.protoZonesVisible);
+		this.protoDbgEl = sw.createDiv({ cls: "epub-sw-dbg", text: "hdr=hide Obsidian header+navbar" });
+	}
+
 	probe(msg: string) {
 		if (!this.probeOn) return;
 		const t = new Date();

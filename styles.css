@@ -408,3 +408,52 @@ button.epub-tb-btn:disabled {
 	width: 18px;
 	height: 18px;
 }
+
+/* ===== PROTOTYPE (throwaway): full-screen mobile reader ===== */
+.workspace-leaf-content.epub-fs > .view-header { display: none !important; }
+body.epub-fs-active .mobile-navbar { display: none !important; }
+.view-content.epub-p.epub-inset {
+	padding-top: env(safe-area-inset-top) !important;
+	padding-bottom: env(safe-area-inset-bottom) !important;
+}
+.epub-p .epub-tb { position: absolute; z-index: 40; transition: transform 0.2s ease, opacity 0.2s ease; box-shadow: 0 2px 12px rgba(0,0,0,.25); }
+.epub-p button.epub-tb-btn { height: 44px; min-width: 44px; }
+/* A: toolbar drops from the top */
+.epub-p-A .epub-tb { top: 0; left: 0; right: 0; padding-top: calc(6px + env(safe-area-inset-top)); transform: translateY(-120%); }
+.epub-p-A.epub-tb-open .epub-tb { transform: none; }
+/* B: toolbar rises from the bottom */
+.epub-p-B .epub-tb { bottom: 0; left: 0; right: 0; padding-bottom: calc(6px + env(safe-area-inset-bottom)); transform: translateY(120%); border-bottom: none; border-top: 1px solid var(--background-modifier-border); }
+.epub-p-B.epub-tb-open .epub-tb { transform: none; }
+.epub-p-B .epub-menu { top: auto !important; bottom: calc(64px + env(safe-area-inset-bottom)) !important; max-height: 60vh; }
+/* C: vertical stack above a corner button */
+.epub-p-C .epub-tb {
+	right: 10px; bottom: calc(66px + env(safe-area-inset-bottom)); left: auto; width: auto;
+	flex-direction: column; align-items: flex-end; overflow: visible; padding: 6px 10px;
+	border: 1px solid var(--background-modifier-border); border-radius: 14px;
+	opacity: 0; pointer-events: none; transform: translateY(10px);
+}
+.epub-p-C.epub-tb-open .epub-tb { opacity: 1; pointer-events: auto; transform: none; }
+.epub-p-C .epub-tb > * { margin: 4px 0 !important; }
+.epub-p-C .epub-menu { top: auto !important; left: auto !important; right: 64px; bottom: calc(66px + env(safe-area-inset-bottom)) !important; max-height: 60vh; }
+/* tap-zone columns */
+.epub-zone { position: absolute; z-index: 20; touch-action: none; -webkit-tap-highlight-color: transparent; width: 22%; top: 0; bottom: 0; }
+.epub-zone-l { left: 0; } .epub-zone-r { right: 0; }
+.epub-p-A .epub-zone { top: calc(40px + env(safe-area-inset-top)); }
+.epub-p-B .epub-zone { bottom: calc(36px + env(safe-area-inset-bottom)); }
+.epub-p-C .epub-zone { width: 14%; }
+.epub-zones-vis .epub-zone { background: rgba(255, 0, 80, 0.12); }
+.epub-zones-vis .epub-strip { background: rgba(0, 120, 255, 0.12); }
+/* reveal affordances */
+.epub-strip { position: absolute; left: 0; right: 0; z-index: 25; -webkit-tap-highlight-color: transparent; }
+.epub-strip-top { top: 0; height: calc(40px + env(safe-area-inset-top)); }
+.epub-strip-top::after { content: ""; position: absolute; left: 50%; bottom: 8px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--text-faint); opacity: .5; }
+.epub-strip-bottom { bottom: 0; height: calc(36px + env(safe-area-inset-bottom)); }
+.epub-prog { position: absolute; left: 0; right: 0; top: 6px; text-align: center; font-size: 11px; color: var(--text-muted); }
+.epub-bar { position: absolute; left: 0; top: 0; height: 2px; background: var(--interactive-accent); width: 0; }
+.epub-fab { position: absolute; z-index: 45; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-normal); background: var(--background-primary); border: 1px solid var(--background-modifier-border); box-shadow: 0 2px 10px rgba(0,0,0,.3); opacity: .85; }
+/* prototype switcher */
+.epub-sw { position: absolute; z-index: 100; left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; max-width: 96%; padding: 4px 8px; border-radius: 14px; background: rgba(20,20,20,.88); color: #fff; font-size: 11px; }
+.epub-sw-top { top: calc(4px + env(safe-area-inset-top)); } .epub-sw-bottom { bottom: calc(40px + env(safe-area-inset-bottom)); }
+.epub-sw button { height: 26px; padding: 0 8px; font-size: 11px; background: #444; color: #fff; border: none; border-radius: 8px; }
+.epub-sw button.is-on { background: #0a84ff; }
+.epub-sw-dbg { flex-basis: 100%; text-align: center; opacity: .7; font-size: 10px; }

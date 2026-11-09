@@ -616,6 +616,17 @@ export default class EpubReaderPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "prototype-touch-probe",
+			name: "PROTOTYPE: touch selection probe",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(EpubView);
+				if (!view) return false;
+				if (!checking) view.toggleProbe();
+				return true;
+			},
+		});
+
+		this.addCommand({
 			id: "merge-highlight-exports",
 			name: tr("合并已导出的高亮摘录", "Merge exported highlight notes", "合併已匯出的高亮摘錄", "Unisci le note di evidenziazioni esportate"),
 			callback: () => new MergeExportsModal(this.app, this).open(),
@@ -4842,6 +4853,7 @@ class EpubView extends FileView {
 				// never bubble to our document's click listener.
 				doc.addEventListener("click", this.outsideClickHandler);
 				this.fixCoverSvgs(doc);
+				if (this.probeOn) this.attachProbe(doc);
 			}
 		});
 
@@ -4858,7 +4870,12 @@ class EpubView extends FileView {
 
 		// Selecting text pops up the highlight-color palette next to the selection.
 		this.rendition.on("selected", (cfiRange: string, contents: Contents) => {
+			this.probe(`epub.js selected len=${contents.window.getSelection()?.toString().length}`);
 			this.showColorToolbar(cfiRange, contents);
+			if (this.probeOn && this.colorToolbar) {
+				const r = this.colorToolbar.getBoundingClientRect();
+				this.probe(`popup top=${Math.round(r.top)} left=${Math.round(r.left)} w=${Math.round(r.width)} (viewport h=${window.innerHeight})`);
+			}
 		});
 
 		if (cfi) {
@@ -5234,6 +5251,44 @@ class EpubView extends FileView {
 	}
 
 	// Pop up the highlight-color palette next to the current text selection.
+	// PROTOTYPE (throwaway, issue "highlighting by native selection on iOS"):
+	// an on-screen log of touch/selection/popup events to see what really fires on iPhone.
+	probeOn = false;
+	probeEl: HTMLElement | null = null;
+	probeLines: string[] = [];
+	probe(msg: string) {
+		if (!this.probeOn) return;
+		const t = new Date();
+		this.probeLines.push(`${t.getMinutes()}:${String(t.getSeconds()).padStart(2, "0")}.${String(t.getMilliseconds()).padStart(3, "0")} ${msg}`);
+		this.probeLines = this.probeLines.slice(-14);
+		if (this.probeEl) this.probeEl.setText(this.probeLines.join("\n"));
+	}
+	toggleProbe() {
+		this.probeOn = !this.probeOn;
+		if (this.probeOn) {
+			this.probeEl = this.contentEl.createEl("pre", {
+				attr: { style: "position:absolute; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:6px; max-height:35%; overflow:hidden; font-size:10px; line-height:1.2; background:rgba(0,0,0,.8); color:#7CFC00; pointer-events:none; white-space:pre-wrap;" },
+			});
+			this.probe(`PROBE ON ua=${navigator.userAgent.slice(-40)} vv=${window.visualViewport?.width}x${window.visualViewport?.height}`);
+			// attach to already-rendered iframes
+			for (const c of ((this.rendition as unknown as { getContents?: () => Contents[] })?.getContents?.() ?? [])) this.attachProbe(c.document);
+		} else {
+			this.probeEl?.remove();
+			this.probeEl = null;
+		}
+	}
+	attachProbe(doc: Document) {
+		for (const ev of ["touchstart", "touchend", "touchcancel", "pointerup", "contextmenu", "click"]) {
+			doc.addEventListener(ev, (e) => this.probe(`${ev} sel="${(doc.getSelection()?.toString() ?? "").slice(0, 12)}"`), true);
+		}
+		let last = "";
+		doc.addEventListener("selectionchange", () => {
+			const t = doc.getSelection()?.toString() ?? "";
+			if (t !== last) this.probe(`selectionchange len=${t.length}`);
+			last = t;
+		});
+	}
+
 	showColorToolbar(cfiRange: string, contents: Contents) {
 		this.dismissColorToolbar();
 		const selection = contents.window.getSelection();
